@@ -1,0 +1,34 @@
+# Byte-compiled files
+*.py[cod]
+__pycache__/
+*.so
+
+# Virtual environment
+venv/
+
+# Environment variables
+.env
+
+# Logs
+*.log
+logs/
+
+# Database files
+*.sqlite3
+db.sqlite3
+
+# Pytest cache
+.pytest_cache/
+
+# MacOS-specific files
+.DS_Store
+
+# IDE files
+.idea/
+
+# Migrations
+migrations/__pycache__/
+
+# Ignore any personal keys
+*.key
+*.pem
