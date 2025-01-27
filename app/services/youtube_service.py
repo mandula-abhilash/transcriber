@@ -148,17 +148,50 @@ def transcribe_audio(audio_path, source_language=None):
         
     try:
         iso_language = get_iso_language_code(source_language)
+
         with open(audio_path, "rb") as audio_file:
+            # If Telugu is selected, transcribe without language parameter
             transcript = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
-                language=iso_language,
+                language=iso_language if iso_language and iso_language != 'te' else None,
                 response_format="verbose_json"
             )
-            return transcript.text, transcript.language
+
+            transcribed_text = transcript.text
+            detected_language = transcript.language if iso_language != 'te' else 'te'
+
+            # If the language is Telugu, send it for translation
+            if source_language == 'telugu':
+                translated_text = translate_telugu_to_english(transcribed_text)
+                return translated_text, detected_language
+
+            return transcribed_text, detected_language
+
     except Exception as e:
         print(f"Error during transcription: {e}")
         return None, None
+
+def translate_telugu_to_english(text):
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4-turbo-preview",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Translate the following Telugu text to English while preserving technical terms, names, and brands in their original form."
+                },
+                {
+                    "role": "user",
+                    "content": text
+                }
+            ],
+            temperature=0.3
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"Error during Telugu translation: {e}")
+        return None
 
 def translate_to_english(text, source_language):
     try:
