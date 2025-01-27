@@ -114,18 +114,41 @@ def reencode_audio(input_file):
         print(f"Unexpected error during re-encoding: {e}")
         return None
 
-def transcribe_audio(audio_path):
+def transcribe_audio(audio_path, source_language=None):
     if not audio_path or not Path(audio_path).exists():
         print("Audio file does not exist")
-        return None
+        return None, None
         
     try:
         with open(audio_path, "rb") as audio_file:
             transcript = client.audio.transcriptions.create(
                 model="whisper-1",
-                file=audio_file
+                file=audio_file,
+                language=source_language,
+                response_format="verbose_json"
             )
-            return transcript.text
+            return transcript.text, transcript.language
     except Exception as e:
         print(f"Error during transcription: {e}")
+        return None, None
+
+def translate_to_english(text, source_language):
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4-turbo-preview",
+            messages=[
+                {
+                    "role": "system",
+                    "content": f"You are a translator. Translate the following {source_language} text to English while preserving technical terms, names, and brands in their original form. If the text appears to be incorrect or garbled, please indicate that in your response."
+                },
+                {
+                    "role": "user",
+                    "content": text
+                }
+            ],
+            temperature=0.3  # Lower temperature for more consistent translations
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"Error during translation: {e}")
         return None
