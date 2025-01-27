@@ -12,6 +12,33 @@ client = openai.OpenAI(
     api_key=settings.OPENAI_API_KEY,
 )
 
+# Language code mapping
+LANGUAGE_CODES = {
+    'hindi': 'hi',
+    'telugu': 'te',
+    'tamil': 'ta',
+    'kannada': 'kn',
+    'malayalam': 'ml',
+    'bengali': 'bn',
+    'marathi': 'mr',
+    'gujarati': 'gu',
+    'urdu': 'ur',
+    'english': 'en',
+    # Add more mappings as needed
+}
+
+def get_iso_language_code(language):
+    if not language:
+        return None
+    
+    # If it's already a valid 2-letter code, return it
+    if len(language) == 2 and language.isalpha():
+        return language.lower()
+    
+    # Try to get from our mapping
+    language_lower = language.lower()
+    return LANGUAGE_CODES.get(language_lower)
+
 # Set FFmpeg path in environment variables
 if settings.FFMPEG_PATH and os.name == "nt":
     os.environ["PATH"] += os.pathsep + settings.FFMPEG_PATH
@@ -120,11 +147,12 @@ def transcribe_audio(audio_path, source_language=None):
         return None, None
         
     try:
+        iso_language = get_iso_language_code(source_language)
         with open(audio_path, "rb") as audio_file:
             transcript = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
-                language=source_language,
+                language=iso_language,
                 response_format="verbose_json"
             )
             return transcript.text, transcript.language
@@ -134,19 +162,22 @@ def transcribe_audio(audio_path, source_language=None):
 
 def translate_to_english(text, source_language):
     try:
+        language_name = next((name for name, code in LANGUAGE_CODES.items() 
+                            if code == source_language.lower()), source_language)
+        
         response = client.chat.completions.create(
             model="gpt-4-turbo-preview",
             messages=[
                 {
                     "role": "system",
-                    "content": f"You are a translator. Translate the following {source_language} text to English while preserving technical terms, names, and brands in their original form. If the text appears to be incorrect or garbled, please indicate that in your response."
+                    "content": f"You are a translator. Translate the following {language_name} text to English while preserving technical terms, names, and brands in their original form. If the text appears to be incorrect or garbled, please indicate that in your response."
                 },
                 {
                     "role": "user",
                     "content": text
                 }
             ],
-            temperature=0.3  # Lower temperature for more consistent translations
+            temperature=0.3
         )
         return response.choices[0].message.content
     except Exception as e:
