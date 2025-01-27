@@ -5,9 +5,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 import re
-from ..config import get_settings
-
-settings = get_settings()
+from ..config import settings
 
 # Initialize OpenAI client without proxies
 client = openai.OpenAI(
@@ -35,7 +33,12 @@ def get_video_info(url):
         ydl_opts = {
             'quiet': True,
             'noplaylist': True,
-            'no_warnings': True  # Added to reduce unnecessary output
+            'no_warnings': True,
+            'extract_flat': True,
+            'force_generic_extractor': False,
+            'ignoreerrors': True,
+            'nocheckcertificate': True,
+            'geo_bypass': True,
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -61,19 +64,33 @@ def download_audio_from_youtube(url):
             'preferredquality': '192',
         }],
         'outtmpl': str(output_file.with_suffix("")),
-        'quiet': False,
-        'no_warnings': True  # Added to reduce unnecessary output
+        'quiet': True,
+        'no_warnings': True,
+        'ignoreerrors': True,
+        'nocheckcertificate': True,
+        'geo_bypass': True,
+        'extract_flat': False,
+        'force_generic_extractor': False,
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
-        return output_file
+        if output_file.exists():
+            print(f"Audio downloaded successfully: {output_file}")
+            return output_file
+        else:
+            print("Download completed but file not found")
+            return None
     except Exception as e:
         print(f"Error downloading audio: {e}")
         return None
 
 def reencode_audio(input_file):
+    if not input_file or not input_file.exists():
+        print("Input file does not exist")
+        return None
+        
     output_file = input_file.parent / f"processed_{input_file.name}"
     try:
         command = [
@@ -85,13 +102,23 @@ def reencode_audio(input_file):
             "-b:a", "192k",
             str(output_file)
         ]
-        subprocess.run(command, check=True, capture_output=True, text=True)  # Updated for better error handling
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"FFmpeg error: {result.stderr}")
+            return None
         return output_file
     except subprocess.CalledProcessError as e:
-        print(f"Error re-encoding audio: {e.stderr}")  # Added stderr output
+        print(f"Error re-encoding audio: {e.stderr}")
+        return None
+    except Exception as e:
+        print(f"Unexpected error during re-encoding: {e}")
         return None
 
 def transcribe_audio(audio_path):
+    if not audio_path or not Path(audio_path).exists():
+        print("Audio file does not exist")
+        return None
+        
     try:
         with open(audio_path, "rb") as audio_file:
             transcript = client.audio.transcriptions.create(
