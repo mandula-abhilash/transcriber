@@ -152,6 +152,9 @@ def reencode_audio(input_file):
 
 def load_audio_for_telugu(audio_path):
     try:
+        # Add debug logging
+        print(f"Loading audio from: {audio_path}")
+        
         # Load audio with correct parameters
         audio_array, sampling_rate = librosa.load(
             audio_path,
@@ -159,16 +162,40 @@ def load_audio_for_telugu(audio_path):
             mono=True
         )
         
+        # Add validation and debugging for audio array
+        print(f"Audio array shape: {audio_array.shape}")
+        print(f"Sample rate: {sampling_rate}")
+        
         # Ensure audio is not empty
         if len(audio_array) == 0:
             print("Audio file is empty")
             return None
             
-        # Normalize audio
-        audio_array = librosa.util.normalize(audio_array)
+        # Add range check
+        if not np.isfinite(audio_array).all():
+            print("Audio contains invalid values (inf or nan)")
+            audio_array = np.nan_to_num(audio_array)
         
+        # Normalize audio and add validation
+        audio_array = librosa.util.normalize(audio_array)
+        if not np.isfinite(audio_array).all():
+            print("Normalized audio contains invalid values")
+            return None
+        
+        # Reshape with validation
+        if len(audio_array.shape) != 1:
+            print(f"Unexpected audio shape: {audio_array.shape}")
+            return None
+            
+        # Ensure minimum length (e.g., 1 second at 16kHz)
+        min_length = 16000
+        if len(audio_array) < min_length:
+            print(f"Audio too short: {len(audio_array)} samples")
+            return None
+            
         # Reshape to match model's expected input shape (1, num_samples)
         audio_array = audio_array.reshape(1, -1)
+        print(f"Final array shape: {audio_array.shape}")
         
         return audio_array
     except Exception as e:
@@ -189,7 +216,11 @@ def transcribe_audio(audio_path, source_language=None):
                 # Load audio as numpy array
                 audio_array = load_audio_for_telugu(audio_path)
                 if audio_array is None:
+                    print("Failed to load audio for Telugu transcription")
                     return None, None
+                
+                # Add input validation
+                print(f"Input features shape before processing: {audio_array.shape}")
                 
                 # Process the audio with the feature extractor
                 inputs = processor(
@@ -198,26 +229,69 @@ def transcribe_audio(audio_path, source_language=None):
                     return_tensors="pt"
                 )
                 
-                # Generate transcription
-                with torch.no_grad():
-                    predicted_ids = model.generate(
-                        inputs["input_features"],
-                        max_length=448,
-                        no_repeat_ngram_size=3,
-                        length_penalty=2.0,
-                        num_beams=4,
-                    )
+                # Validate processor output
+                if "input_features" not in inputs:
+                    print("Processor failed to generate input features")
+                    return None, None
+                    
+                print(f"Processed input features shape: {inputs['input_features'].shape}")
                 
-                # Decode the output
-                transcribed_text = processor.batch_decode(
-                    predicted_ids,
-                    skip_special_tokens=True,
-                    clean_up_tokenization_spaces=True
-                )[0].strip()
+                # Add forced token configuration
+                forced_decoder_ids = processor.get_decoder_prompt_ids(language="te", task="transcribe")
                 
-                return transcribed_text, "te"
+                # Generate transcription with error handling
+                try:
+                    with torch.no_grad():
+                        predicted_ids = model.generate(
+                            inputs["input_features"],
+                            max_length=448,
+                            no_repeat_ngram_size=3,
+                            length_penalty=2.0,
+                            num_beams=4,
+                            forced_decoder_ids=forced_decoder_ids,
+                            return_dict_in_generate=True,
+                            output_scores=True
+                        )
+                        
+                    # Extract the sequence scores
+                    if hasattr(predicted_ids, 'sequences'):
+                        sequences = predicted_ids.sequences
+                        print(f"Generated sequences shape: {sequences.shape}")
+                    else:
+                        print("No sequences in generated output")
+                        return None, None
+
+                except RuntimeError as e:
+                    print(f"Error during model generation: {e}")
+                    # Print model device and input device
+                    print(f"Model device: {next(model.parameters()).device}")
+                    print(f"Input device: {inputs['input_features'].device}")
+                    return None, None
+                
+                
+                # Decode the output with validation
+                try:
+                    transcribed_text = processor.batch_decode(
+                        sequences,
+                        skip_special_tokens=True,
+                        clean_up_tokenization_spaces=True
+                    )[0].strip()
+                    
+                    if not transcribed_text:
+                        print("Empty transcription result")
+                        return None, None
+                    
+                    print(f"Successfully transcribed text length: {len(transcribed_text)}")
+                    return transcribed_text, "te"
+                    
+                except Exception as e:
+                    print(f"Error during text decoding: {e}")
+                    return None, None
+               
             except Exception as e:
                 print(f"Error during Telugu transcription: {e}")
+                print(f"Exception type: {type(e)}")
+                print(f"Exception args: {e.args}")
                 return None, None
 
         # Default to OpenAI Whisper for other languages
