@@ -1,4 +1,4 @@
-from transformers import pipeline
+from transformers import pipeline, WhisperForConditionalGeneration, WhisperProcessor
 import yt_dlp
 import openai
 import os
@@ -9,6 +9,7 @@ import re
 from ..config import settings
 import numpy as np
 import librosa
+import torch
 
 # Initialize OpenAI client without proxies
 client = openai.OpenAI(
@@ -27,28 +28,26 @@ LANGUAGE_CODES = {
     'gujarati': 'gu',
     'urdu': 'ur',
     'english': 'en',
-    # Add more mappings as needed
 }
 
-# Load the Hugging Face pipeline for Telugu transcription
-telugu_pipeline = pipeline(
-    "automatic-speech-recognition",
-    model="vasista22/whisper-telugu-large-v2"
-)
+# Initialize the model and processor
+model_name = "vasista22/whisper-telugu-large-v2"
+model = WhisperForConditionalGeneration.from_pretrained(model_name)
+processor = WhisperProcessor.from_pretrained(model_name)
+
+# Configure generation parameters
+model.config.no_timestamps_token_id = processor.tokenizer.convert_tokens_to_ids("<|notimestamps|>")
 
 def get_iso_language_code(language):
     if not language:
         return None
     
-    # If it's already a valid 2-letter code, return it
     if len(language) == 2 and language.isalpha():
         return language.lower()
     
-    # Try to get from our mapping
     language_lower = language.lower()
     return LANGUAGE_CODES.get(language_lower)
 
-# Set FFmpeg path in environment variables
 if settings.FFMPEG_PATH and os.name == "nt":
     os.environ["PATH"] += os.pathsep + settings.FFMPEG_PATH
 
@@ -135,6 +134,7 @@ def reencode_audio(input_file):
             "-i", str(input_file),
             "-acodec", "libmp3lame",
             "-ar", "16000",
+            "-ac", "1",  # Force mono channel
             "-b:a", "192k",
             str(output_file)
         ]
@@ -152,8 +152,24 @@ def reencode_audio(input_file):
 
 def load_audio_for_telugu(audio_path):
     try:
-        # Load audio file using librosa
-        audio_array, sampling_rate = librosa.load(audio_path, sr=16000)
+        # Load audio with correct parameters
+        audio_array, sampling_rate = librosa.load(
+            audio_path,
+            sr=16000,
+            mono=True
+        )
+        
+        # Ensure audio is not empty
+        if len(audio_array) == 0:
+            print("Audio file is empty")
+            return None
+            
+        # Normalize audio
+        audio_array = librosa.util.normalize(audio_array)
+        
+        # Reshape to match model's expected input shape (1, num_samples)
+        audio_array = audio_array.reshape(1, -1)
+        
         return audio_array
     except Exception as e:
         print(f"Error loading audio for Telugu transcription: {e}")
@@ -175,8 +191,30 @@ def transcribe_audio(audio_path, source_language=None):
                 if audio_array is None:
                     return None, None
                 
-                result = telugu_pipeline(audio_array)
-                transcribed_text = result["text"]
+                # Process the audio with the feature extractor
+                inputs = processor(
+                    audio_array,
+                    sampling_rate=16000,
+                    return_tensors="pt"
+                )
+                
+                # Generate transcription
+                with torch.no_grad():
+                    predicted_ids = model.generate(
+                        inputs["input_features"],
+                        max_length=448,
+                        no_repeat_ngram_size=3,
+                        length_penalty=2.0,
+                        num_beams=4,
+                    )
+                
+                # Decode the output
+                transcribed_text = processor.batch_decode(
+                    predicted_ids,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=True
+                )[0].strip()
+                
                 return transcribed_text, "te"
             except Exception as e:
                 print(f"Error during Telugu transcription: {e}")
