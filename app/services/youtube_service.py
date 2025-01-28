@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 import re
 from ..config import settings
+import numpy as np
+import librosa
 
 # Initialize OpenAI client without proxies
 client = openai.OpenAI(
@@ -148,6 +150,15 @@ def reencode_audio(input_file):
         print(f"Unexpected error during re-encoding: {e}")
         return None
 
+def load_audio_for_telugu(audio_path):
+    try:
+        # Load audio file using librosa
+        audio_array, sampling_rate = librosa.load(audio_path, sr=16000)
+        return audio_array
+    except Exception as e:
+        print(f"Error loading audio for Telugu transcription: {e}")
+        return None
+
 def transcribe_audio(audio_path, source_language=None):
     if not audio_path or not Path(audio_path).exists():
         print("Audio file does not exist")
@@ -159,7 +170,12 @@ def transcribe_audio(audio_path, source_language=None):
         # Use Hugging Face model for Telugu transcription
         if source_language == "telugu":
             try:
-                result = telugu_pipeline(audio_path)
+                # Load audio as numpy array
+                audio_array = load_audio_for_telugu(audio_path)
+                if audio_array is None:
+                    return None, None
+                
+                result = telugu_pipeline(audio_array)
                 transcribed_text = result["text"]
                 return transcribed_text, "te"
             except Exception as e:
