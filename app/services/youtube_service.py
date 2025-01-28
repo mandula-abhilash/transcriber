@@ -1,3 +1,4 @@
+from transformers import pipeline
 import yt_dlp
 import openai
 import os
@@ -26,6 +27,12 @@ LANGUAGE_CODES = {
     'english': 'en',
     # Add more mappings as needed
 }
+
+# Load the Hugging Face pipeline for Telugu transcription
+telugu_pipeline = pipeline(
+    "automatic-speech-recognition",
+    model="vasista22/whisper-telugu-large-v2"
+)
 
 def get_iso_language_code(language):
     if not language:
@@ -149,24 +156,25 @@ def transcribe_audio(audio_path, source_language=None):
     try:
         iso_language = get_iso_language_code(source_language)
 
+        # Use Hugging Face model for Telugu transcription
+        if source_language == "telugu":
+            try:
+                result = telugu_pipeline(audio_path)
+                transcribed_text = result["text"]
+                return transcribed_text, "te"
+            except Exception as e:
+                print(f"Error during Telugu transcription: {e}")
+                return None, None
+
+        # Default to OpenAI Whisper for other languages
         with open(audio_path, "rb") as audio_file:
-            # If Telugu is selected, transcribe without language parameter
             transcript = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
-                language=iso_language if iso_language and iso_language != 'te' else None,
+                language=iso_language if iso_language else None,
                 response_format="verbose_json"
             )
-
-            transcribed_text = transcript.text
-            detected_language = transcript.language if iso_language != 'te' else 'te'
-
-            # If the language is Telugu, send it for translation
-            if source_language == 'telugu':
-                translated_text = translate_telugu_to_english(transcribed_text)
-                return translated_text, detected_language
-
-            return transcribed_text, detected_language
+            return transcript.text, transcript.language
 
     except Exception as e:
         print(f"Error during transcription: {e}")
