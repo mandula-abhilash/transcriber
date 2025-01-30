@@ -30,13 +30,12 @@ LANGUAGE_CODES = {
     'english': 'en',
 }
 
-# Initialize the model and processor
-model_name = "vasista22/whisper-telugu-large-v2"
-model = WhisperForConditionalGeneration.from_pretrained(model_name)
-processor = WhisperProcessor.from_pretrained(model_name)
-
-# Configure generation parameters
-model.config.no_timestamps_token_id = processor.tokenizer.convert_tokens_to_ids("<|notimestamps|>")
+# Initialize the model and processor if using Whisper Telugu Large v2
+if settings.USE_WHISPER_TELUGU_LARGE_V2:
+    model_name = "vasista22/whisper-telugu-large-v2"
+    model = WhisperForConditionalGeneration.from_pretrained(model_name)
+    processor = WhisperProcessor.from_pretrained(model_name)
+    model.config.no_timestamps_token_id = processor.tokenizer.convert_tokens_to_ids("<|notimestamps|>")
 
 def get_iso_language_code(language):
     if not language:
@@ -152,48 +151,39 @@ def reencode_audio(input_file):
 
 def load_audio_for_telugu(audio_path):
     try:
-        # Add debug logging
         print(f"Loading audio from: {audio_path}")
         
-        # Load audio with correct parameters
         audio_array, sampling_rate = librosa.load(
             audio_path,
             sr=16000,
             mono=True
         )
         
-        # Add validation and debugging for audio array
         print(f"Audio array shape: {audio_array.shape}")
         print(f"Sample rate: {sampling_rate}")
         
-        # Ensure audio is not empty
         if len(audio_array) == 0:
             print("Audio file is empty")
             return None
             
-        # Add range check
         if not np.isfinite(audio_array).all():
             print("Audio contains invalid values (inf or nan)")
             audio_array = np.nan_to_num(audio_array)
         
-        # Normalize audio and add validation
         audio_array = librosa.util.normalize(audio_array)
         if not np.isfinite(audio_array).all():
             print("Normalized audio contains invalid values")
             return None
         
-        # Reshape with validation
         if len(audio_array.shape) != 1:
             print(f"Unexpected audio shape: {audio_array.shape}")
             return None
             
-        # Ensure minimum length (e.g., 1 second at 16kHz)
         min_length = 16000
         if len(audio_array) < min_length:
             print(f"Audio too short: {len(audio_array)} samples")
             return None
             
-        # Reshape to match model's expected input shape (1, num_samples)
         audio_array = audio_array.reshape(1, -1)
         print(f"Final array shape: {audio_array.shape}")
         
@@ -210,36 +200,30 @@ def transcribe_audio(audio_path, source_language=None):
     try:
         iso_language = get_iso_language_code(source_language)
 
-        # Use Hugging Face model for Telugu transcription
-        if source_language == "telugu":
+        # Use Hugging Face model for Telugu transcription if flag is enabled
+        if source_language == "telugu" and settings.USE_WHISPER_TELUGU_LARGE_V2:
             try:
-                # Load audio as numpy array
                 audio_array = load_audio_for_telugu(audio_path)
                 if audio_array is None:
                     print("Failed to load audio for Telugu transcription")
                     return None, None
                 
-                # Add input validation
                 print(f"Input features shape before processing: {audio_array.shape}")
                 
-                # Process the audio with the feature extractor
                 inputs = processor(
                     audio_array,
                     sampling_rate=16000,
                     return_tensors="pt"
                 )
                 
-                # Validate processor output
                 if "input_features" not in inputs:
                     print("Processor failed to generate input features")
                     return None, None
                     
                 print(f"Processed input features shape: {inputs['input_features'].shape}")
                 
-                # Add forced token configuration
                 forced_decoder_ids = processor.get_decoder_prompt_ids(language="te", task="transcribe")
                 
-                # Generate transcription with error handling
                 try:
                     with torch.no_grad():
                         predicted_ids = model.generate(
@@ -253,7 +237,6 @@ def transcribe_audio(audio_path, source_language=None):
                             output_scores=True
                         )
                         
-                    # Extract the sequence scores
                     if hasattr(predicted_ids, 'sequences'):
                         sequences = predicted_ids.sequences
                         print(f"Generated sequences shape: {sequences.shape}")
@@ -263,13 +246,10 @@ def transcribe_audio(audio_path, source_language=None):
 
                 except RuntimeError as e:
                     print(f"Error during model generation: {e}")
-                    # Print model device and input device
                     print(f"Model device: {next(model.parameters()).device}")
                     print(f"Input device: {inputs['input_features'].device}")
                     return None, None
                 
-                
-                # Decode the output with validation
                 try:
                     transcribed_text = processor.batch_decode(
                         sequences,
@@ -294,15 +274,27 @@ def transcribe_audio(audio_path, source_language=None):
                 print(f"Exception args: {e.args}")
                 return None, None
 
-        # Default to OpenAI Whisper for other languages
+        # Use OpenAI Whisper for other languages or Telugu when flag is disabled
         with open(audio_path, "rb") as audio_file:
+            # For Telugu when not using the specialized model, don't specify language
+            use_language = None if source_language == "telugu" else iso_language
+            
             transcript = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
-                language=iso_language if iso_language else None,
+                language=use_language,
                 response_format="verbose_json"
             )
-            return transcript.text, transcript.language
+            
+            transcribed_text = transcript.text
+            detected_language = transcript.language
+
+            # If Telugu and not using Whisper Telugu Large v2, translate using GPT-4
+            if source_language == 'telugu' and not settings.USE_WHISPER_TELUGU_LARGE_V2:
+                translated_text = translate_telugu_to_english(transcribed_text)
+                return translated_text, "te"  # Return "te" as language since we know it's Telugu
+
+            return transcribed_text, detected_language
 
     except Exception as e:
         print(f"Error during transcription: {e}")
