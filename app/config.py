@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     # File storage configuration
     FILES_BASE_DIR: str = os.getenv("FILES_BASE_DIR", "files")
     
+    # YouTube cookies path
+    YOUTUBE_COOKIES_PATH: str = os.getenv("YOUTUBE_COOKIES_PATH", "")
+    
+    # Bright Data proxy configuration
+    LUMINATI_USERNAME: str = os.getenv("LUMINATI_USERNAME", "")
+    LUMINATI_PASSWORD: str = os.getenv("LUMINATI_PASSWORD", "")
+    
     class Config:
         env_file = ".env"
 

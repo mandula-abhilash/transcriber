@@ -33,6 +33,17 @@ LANGUAGE_CODES = {
     'english': 'en',
 }
 
+def get_proxy_config():
+    """Get Bright Data proxy authentication"""
+    if not settings.LUMINATI_USERNAME or not settings.LUMINATI_PASSWORD:
+        return None
+    
+    proxy_url = f"http://{settings.LUMINATI_USERNAME}:{settings.LUMINATI_PASSWORD}@brd.superproxy.io:33335"
+    return {
+        'http': proxy_url,
+        'https': proxy_url
+    }
+
 # Initialize the model and processor if using Whisper Telugu Large v2
 if settings.USE_WHISPER_TELUGU_LARGE_V2:
     model_name = "vasista22/whisper-telugu-large-v2"
@@ -77,6 +88,16 @@ def get_video_info(url):
             'nocheckcertificate': True,
             'geo_bypass': True,
         }
+        
+        # Add proxy configuration if available
+        # proxy_config = get_proxy_config()
+        # if proxy_config:
+        #     ydl_opts['proxy'] = proxy_config['http']
+        
+        # Add cookies file if available
+        if settings.YOUTUBE_COOKIES_PATH:
+            ydl_opts['cookiefile'] = settings.YOUTUBE_COOKIES_PATH
+    
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             raw_title = info.get('title', 'untitled')
@@ -108,8 +129,20 @@ def download_audio_from_youtube(url):
         'geo_bypass': True,
         'extract_flat': False,
         'force_generic_extractor': False,
+        # 'http_headers': {        
+        #     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        # }
     }
+    
+    # Add proxy configuration if available
+    # proxy_config = get_proxy_config()
+    # if proxy_config:
+    #     ydl_opts['proxy'] = proxy_config['http']
 
+    # Add cookies file if available
+    if settings.YOUTUBE_COOKIES_PATH:
+        ydl_opts['cookiefile'] = settings.YOUTUBE_COOKIES_PATH
+    
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
