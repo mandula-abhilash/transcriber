@@ -55,7 +55,7 @@ if settings.FFMPEG_PATH and os.name == "nt":
 
 def get_save_directory():
     today = datetime.now().strftime("%Y-%m-%d")
-    save_dir = Path("files") / today
+    save_dir = Path(settings.FILES_BASE_DIR) / today
     save_dir.mkdir(parents=True, exist_ok=True)
     return save_dir
 

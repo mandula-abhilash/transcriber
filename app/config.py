@@ -2,6 +2,7 @@ from pydantic_settings import BaseSettings
 from functools import lru_cache
 import os
 from dotenv import load_dotenv
+from pathlib import Path
 
 load_dotenv()
 
@@ -12,6 +13,9 @@ class Settings(BaseSettings):
     
     # Single API URL configuration
     API_URL: str = os.getenv("API_URL", "")
+    
+    # File storage configuration
+    FILES_BASE_DIR: str = os.getenv("FILES_BASE_DIR", "files")
     
     class Config:
         env_file = ".env"
