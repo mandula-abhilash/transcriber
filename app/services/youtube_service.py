@@ -307,7 +307,7 @@ def translate_telugu_to_english(text):
             messages=[
                 {
                     "role": "system",
-                    "content": "Translate the following Telugu text to English while preserving technical terms, names, and brands in their original form."
+                    "content": "Translate the following Telugu text to English while preserving technical terms, names, and brands in their original form. Provide only the direct translation without any explanations, comments, or notes."
                 },
                 {
                     "role": "user",
@@ -331,7 +331,7 @@ def translate_to_english(text, source_language):
             messages=[
                 {
                     "role": "system",
-                    "content": f"You are a translator. Translate the following {language_name} text to English while preserving technical terms, names, and brands in their original form. If the text appears to be incorrect or garbled, please indicate that in your response."
+                    "content": f"You are a translator. Translate the following {language_name} text to English while preserving technical terms, names, and brands in their original form. Provide only the direct translation without any explanations, comments, or notes."
                 },
                 {
                     "role": "user",
