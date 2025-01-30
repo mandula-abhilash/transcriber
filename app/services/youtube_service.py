@@ -11,10 +11,13 @@ import numpy as np
 import librosa
 import torch
 
-# Initialize OpenAI client without proxies
-client = openai.OpenAI(
-    api_key=settings.OPENAI_API_KEY,
-)
+# Initialize OpenAI client with empty key - will be updated from request
+client = openai.OpenAI(api_key="")
+
+def update_api_key(api_key: str):
+    """Update the OpenAI client with a new API key"""
+    global client
+    client = openai.OpenAI(api_key=api_key)
 
 # Language code mapping
 LANGUAGE_CODES = {
