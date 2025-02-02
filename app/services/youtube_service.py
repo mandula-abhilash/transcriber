@@ -267,34 +267,24 @@ def transcribe_audio(audio_path, source_language=None):
                 try:
                     logger.info("Generating transcription with model")
                     with torch.no_grad():
-                        predicted_ids = model.generate(
+                        generated_ids = model.generate(
                             inputs["input_features"],
+                            forced_decoder_ids=forced_decoder_ids,
                             max_length=448,
                             no_repeat_ngram_size=3,
-                            length_penalty=2.0,
                             num_beams=4,
-                            forced_decoder_ids=forced_decoder_ids,
-                            return_dict_in_generate=True,
-                            output_scores=True
+                            length_penalty=2.0
                         )
                         
-                    if hasattr(predicted_ids, 'sequences'):
-                        sequences = predicted_ids.sequences
-                        logger.info(f"Generated sequences shape: {sequences.shape}")
-                    else:
-                        logger.error("No sequences in generated output")
+                    if generated_ids is None or generated_ids.shape[0] == 0:
+                        logger.error("No sequences generated")
                         return None, None
 
-                except RuntimeError as e:
-                    logger.error(f"Error during model generation: {e}")
-                    logger.error(f"Model device: {next(model.parameters()).device}")
-                    logger.error(f"Input device: {inputs['input_features'].device}")
-                    return None, None
-                
-                try:
+                    logger.info(f"Generated sequences shape: {generated_ids.shape}")
+                    
                     logger.info("Decoding transcribed text")
                     transcribed_text = processor.batch_decode(
-                        sequences,
+                        generated_ids,
                         skip_special_tokens=True,
                         clean_up_tokenization_spaces=True
                     )[0].strip()
@@ -306,9 +296,14 @@ def transcribe_audio(audio_path, source_language=None):
                     logger.info(f"Successfully transcribed text length: {len(transcribed_text)}")
                     logger.info("First 100 characters of transcription: " + transcribed_text[:100] + "...")
                     return transcribed_text, "te"
-                    
+
+                except RuntimeError as e:
+                    logger.error(f"Error during model generation: {e}")
+                    logger.error(f"Model device: {next(model.parameters()).device}")
+                    logger.error(f"Input device: {inputs['input_features'].device}")
+                    return None, None
                 except Exception as e:
-                    logger.error(f"Error during text decoding: {e}")
+                    logger.error(f"Error during text generation/decoding: {e}")
                     return None, None
                
             except Exception as e:
