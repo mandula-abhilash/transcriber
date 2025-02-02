@@ -10,6 +10,8 @@ from ..config import settings
 import logging
 from . import whisper_service
 
+telugu_transcriber = whisper_service.TeluguWhisperService()
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -226,7 +228,7 @@ def transcribe_audio(audio_path, source_language=None):
         is_telugu = source_language and source_language.lower() in ['telugu', 'te']
         if is_telugu and settings.USE_WHISPER_TELUGU_LARGE_V2:
             logger.info("Starting Telugu transcription with Whisper Telugu Large v2")
-            transcribed_text = whisper_service.transcribe_telugu(audio_path)
+            transcribed_text = telugu_transcriber.transcribe(audio_path)
             if transcribed_text:
                 return transcribed_text, "te"
             return None, None
