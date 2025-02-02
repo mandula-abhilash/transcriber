@@ -1,4 +1,4 @@
-from transformers import pipeline, WhisperForConditionalGeneration, WhisperProcessor
+from transformers import pipeline, AutoProcessor, AutoModelForSpeechSeq2Seq
 import yt_dlp
 import openai
 import os
@@ -52,20 +52,30 @@ def get_proxy_config():
         'https': proxy_url
     }
 
-# Initialize the pipeline globally along with other model initializations
+# Initialize the model, processor, and pipeline if using Whisper Telugu Large v2
+device = "cuda:0" if torch.cuda.is_available() else "cpu"
+model = None
+processor = None
+transcribe_pipeline = None
+
 if settings.USE_WHISPER_TELUGU_LARGE_V2:
-    logger.info("Initializing Whisper Telugu Large v2 pipeline")
+    logger.info("Initializing Whisper Telugu Large v2 model, processor, and pipeline")
     try:
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        processor = AutoProcessor.from_pretrained("vasista22/whisper-telugu-large-v2")
+        model = AutoModelForSpeechSeq2Seq.from_pretrained("vasista22/whisper-telugu-large-v2").to(device)
         transcribe_pipeline = pipeline(
-            task="automatic-speech-recognition",
+            "automatic-speech-recognition",
             model="vasista22/whisper-telugu-large-v2",
-            chunk_length_s=30,
             device=device
         )
-        logger.info("Successfully initialized Whisper Telugu pipeline")
+        # Set forced decoder IDs for Telugu
+        transcribe_pipeline.model.config.forced_decoder_ids = transcribe_pipeline.tokenizer.get_decoder_prompt_ids(
+            language="te",
+            task="transcribe"
+        )
+        logger.info("Successfully initialized Whisper Telugu model, processor, and pipeline")
     except Exception as e:
-        logger.error(f"Failed to initialize Whisper Telugu pipeline: {e}")
+        logger.error(f"Failed to initialize Whisper Telugu components: {e}")
         raise
 
 def get_iso_language_code(language):
@@ -181,13 +191,24 @@ def reencode_audio(input_file):
             return None
         return output_file
     except subprocess.CalledProcessError as e:
-        logger.error(f"Error re-encoding audio: {e}")
+        logger.error(f"Error re-encoding audio: {e.stderr}")
         return None
     except Exception as e:
         logger.error(f"Unexpected error during re-encoding: {e}")
         return None
 
+def load_audio(audio_path):
+    """Basic audio loading function for non-Telugu transcription"""
+    try:
+        logger.info(f"Loading audio from: {audio_path}")
+        audio_array, sampling_rate = librosa.load(audio_path, sr=16000)
+        return audio_array
+    except Exception as e:
+        logger.error(f"Error loading audio: {e}")
+        return None
+
 def load_audio_for_telugu(audio_path):
+    """Enhanced audio loading function with preprocessing for Telugu transcription"""
     try:
         logger.info(f"Loading audio from: {audio_path}")
         
@@ -243,21 +264,33 @@ def transcribe_audio(audio_path, source_language=None):
         if is_telugu and settings.USE_WHISPER_TELUGU_LARGE_V2:
             logger.info("Starting Telugu transcription with Whisper Telugu Large v2")
             try:
-                # Set the decoder prompt IDs for Telugu
-                transcribe_pipeline.model.config.forced_decoder_ids = transcribe_pipeline.tokenizer.get_decoder_prompt_ids(
-                    language="te",
-                    task="transcribe"
-                )
-                
-                # Transcribe using the pipeline
-                logger.info("Transcribing audio using pipeline")
-                result = transcribe_pipeline(str(audio_path))
-                
-                if not result or "text" not in result:
-                    logger.error("Pipeline returned no result")
+                # Use the enhanced Telugu audio loading function
+                audio_array = load_audio_for_telugu(str(audio_path))
+                if audio_array is None:
+                    logger.error("Failed to load audio")
                     return None, None
                 
-                transcribed_text = result["text"].strip()
+                # Process audio with processor
+                inputs = processor(
+                    audio_array,
+                    sampling_rate=16000,
+                    return_tensors="pt"
+                ).to(device)
+                
+                # Generate transcription
+                logger.info("Generating transcription")
+                with torch.no_grad():
+                    generated_ids = model.generate(
+                        inputs=inputs.input_features,
+                        language="te",
+                        task="transcribe"
+                    )
+                
+                # Decode the generated ids
+                transcribed_text = processor.batch_decode(
+                    generated_ids,
+                    skip_special_tokens=True
+                )[0].strip()
                 
                 if not transcribed_text:
                     logger.error("Empty transcription result")
