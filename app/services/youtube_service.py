@@ -52,17 +52,20 @@ def get_proxy_config():
         'https': proxy_url
     }
 
-# Initialize the model and processor if using Whisper Telugu Large v2
+# Initialize the pipeline globally along with other model initializations
 if settings.USE_WHISPER_TELUGU_LARGE_V2:
-    logger.info("Initializing Whisper Telugu Large v2 model and processor")
-    model_name = "vasista22/whisper-telugu-large-v2"
+    logger.info("Initializing Whisper Telugu Large v2 pipeline")
     try:
-        model = WhisperForConditionalGeneration.from_pretrained(model_name)
-        processor = WhisperProcessor.from_pretrained(model_name)
-        model.config.no_timestamps_token_id = processor.tokenizer.convert_tokens_to_ids("<|notimestamps|>")
-        logger.info("Successfully initialized Whisper Telugu Large v2 model and processor")
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        transcribe_pipeline = pipeline(
+            task="automatic-speech-recognition",
+            model="vasista22/whisper-telugu-large-v2",
+            chunk_length_s=30,
+            device=device
+        )
+        logger.info("Successfully initialized Whisper Telugu pipeline")
     except Exception as e:
-        logger.error(f"Failed to initialize Whisper Telugu Large v2 model: {e}")
+        logger.error(f"Failed to initialize Whisper Telugu pipeline: {e}")
         raise
 
 def get_iso_language_code(language):
@@ -240,72 +243,30 @@ def transcribe_audio(audio_path, source_language=None):
         if is_telugu and settings.USE_WHISPER_TELUGU_LARGE_V2:
             logger.info("Starting Telugu transcription with Whisper Telugu Large v2")
             try:
-                logger.info("Loading and preprocessing audio")
-                audio_array = load_audio_for_telugu(audio_path)
-                if audio_array is None:
-                    logger.error("Failed to load audio for Telugu transcription")
-                    return None, None
-                
-                logger.info(f"Input features shape before processing: {audio_array.shape}")
-                
-                logger.info("Processing audio with Whisper processor")
-                inputs = processor(
-                    audio_array,
-                    sampling_rate=16000,
-                    return_tensors="pt"
+                # Set the decoder prompt IDs for Telugu
+                transcribe_pipeline.model.config.forced_decoder_ids = transcribe_pipeline.tokenizer.get_decoder_prompt_ids(
+                    language="te",
+                    task="transcribe"
                 )
                 
-                if "input_features" not in inputs:
-                    logger.error("Processor failed to generate input features")
-                    return None, None
-                    
-                logger.info(f"Processed input features shape: {inputs['input_features'].shape}")
+                # Transcribe using the pipeline
+                logger.info("Transcribing audio using pipeline")
+                result = transcribe_pipeline(str(audio_path))
                 
-                logger.info("Getting decoder prompt IDs for Telugu")
-                forced_decoder_ids = processor.get_decoder_prompt_ids(language="te", task="transcribe")
+                if not result or "text" not in result:
+                    logger.error("Pipeline returned no result")
+                    return None, None
                 
-                try:
-                    logger.info("Generating transcription with model")
-                    with torch.no_grad():
-                        generated_ids = model.generate(
-                            inputs["input_features"],
-                            forced_decoder_ids=forced_decoder_ids,
-                            max_length=448,
-                            no_repeat_ngram_size=3,
-                            num_beams=4,
-                            length_penalty=2.0
-                        )
-                        
-                    if generated_ids is None or generated_ids.shape[0] == 0:
-                        logger.error("No sequences generated")
-                        return None, None
-
-                    logger.info(f"Generated sequences shape: {generated_ids.shape}")
-                    
-                    logger.info("Decoding transcribed text")
-                    transcribed_text = processor.batch_decode(
-                        generated_ids,
-                        skip_special_tokens=True,
-                        clean_up_tokenization_spaces=True
-                    )[0].strip()
-                    
-                    if not transcribed_text:
-                        logger.error("Empty transcription result")
-                        return None, None
-                    
-                    logger.info(f"Successfully transcribed text length: {len(transcribed_text)}")
-                    logger.info("First 100 characters of transcription: " + transcribed_text[:100] + "...")
-                    return transcribed_text, "te"
-
-                except RuntimeError as e:
-                    logger.error(f"Error during model generation: {e}")
-                    logger.error(f"Model device: {next(model.parameters()).device}")
-                    logger.error(f"Input device: {inputs['input_features'].device}")
+                transcribed_text = result["text"].strip()
+                
+                if not transcribed_text:
+                    logger.error("Empty transcription result")
                     return None, None
-                except Exception as e:
-                    logger.error(f"Error during text generation/decoding: {e}")
-                    return None, None
-               
+                
+                logger.info(f"Successfully transcribed text length: {len(transcribed_text)}")
+                logger.info("First 100 characters of transcription: " + transcribed_text[:100] + "...")
+                return transcribed_text, "te"
+                
             except Exception as e:
                 logger.error(f"Error during Telugu transcription: {e}")
                 logger.error(f"Exception type: {type(e)}")
