@@ -178,7 +178,7 @@ def reencode_audio(input_file):
             return None
         return output_file
     except subprocess.CalledProcessError as e:
-        logger.error(f"Error re-encoding audio: {e.stderr}")
+        logger.error(f"Error re-encoding audio: {e}")
         return None
     except Exception as e:
         logger.error(f"Unexpected error during re-encoding: {e}")
@@ -234,9 +234,10 @@ def transcribe_audio(audio_path, source_language=None):
         
     try:
         iso_language = get_iso_language_code(source_language)
-
-        # Use Hugging Face model for Telugu transcription if flag is enabled
-        if source_language == "telugu" and settings.USE_WHISPER_TELUGU_LARGE_V2:
+        
+        # Check if it's Telugu and USE_WHISPER_TELUGU_LARGE_V2 is enabled
+        is_telugu = source_language and source_language.lower() in ['telugu', 'te']
+        if is_telugu and settings.USE_WHISPER_TELUGU_LARGE_V2:
             logger.info("Starting Telugu transcription with Whisper Telugu Large v2")
             try:
                 logger.info("Loading and preprocessing audio")
@@ -315,28 +316,29 @@ def transcribe_audio(audio_path, source_language=None):
                 logger.error(f"Exception type: {type(e)}")
                 logger.error(f"Exception args: {e.args}")
                 return None, None
+        
+        # For non-Telugu languages or when Telugu model is disabled, use OpenAI Whisper
+        if not is_telugu or not settings.USE_WHISPER_TELUGU_LARGE_V2:
+            with open(audio_path, "rb") as audio_file:
+                # Don't specify language for OpenAI if it's Telugu
+                use_language = None if is_telugu else iso_language
+                
+                transcript = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    language=use_language,
+                    response_format="verbose_json"
+                )
+                
+                transcribed_text = transcript.text
+                detected_language = transcript.language
 
-        # Use OpenAI Whisper for other languages or Telugu when flag is disabled
-        with open(audio_path, "rb") as audio_file:
-            # For Telugu when not using the specialized model, don't specify language
-            use_language = None if source_language == "telugu" else iso_language
-            
-            transcript = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file,
-                language=use_language,
-                response_format="verbose_json"
-            )
-            
-            transcribed_text = transcript.text
-            detected_language = transcript.language
+                # If Telugu and not using Whisper Telugu Large v2, translate using GPT-4
+                if is_telugu and not settings.USE_WHISPER_TELUGU_LARGE_V2:
+                    translated_text = translate_telugu_to_english(transcribed_text)
+                    return translated_text, "te"
 
-            # If Telugu and not using Whisper Telugu Large v2, translate using GPT-4
-            if source_language == 'telugu' and not settings.USE_WHISPER_TELUGU_LARGE_V2:
-                translated_text = translate_telugu_to_english(transcribed_text)
-                return translated_text, "te"  # Return "te" as language since we know it's Telugu
-
-            return transcribed_text, detected_language
+                return transcribed_text, detected_language
 
     except Exception as e:
         logger.error(f"Error during transcription: {e}")
