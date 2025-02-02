@@ -1,147 +1,123 @@
+from transformers import pipeline, AutoProcessor, AutoModelForSpeechSeq2Seq
 import torch
 import logging
 import librosa
 import numpy as np
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from ..config import settings
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-class TeluguWhisperService:
-    def __init__(self, model_name: str = "vasista22/whisper-telugu-large-v2"):
-        self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        self.model = None
-        self.processor = None
-        self.model_name = model_name
-        self.initialize_whisper()
+# Initialize components
+device = "cuda:0" if torch.cuda.is_available() else "cpu"
+model = None
+processor = None
+transcribe_pipeline = None
 
-    def initialize_whisper(self) -> None:
-        """Initialize Whisper model and processor with proper error handling"""
+def initialize_whisper():
+    """Initialize Whisper model and processor"""
+    global model, processor, transcribe_pipeline
+    
+    if settings.USE_WHISPER_TELUGU_LARGE_V2:
+        logger.info("Initializing Whisper Telugu Large v2 model and processor")
         try:
-            from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+            model_name = "vasista22/whisper-telugu-large-v2"
             
-            logger.info(f"Initializing Whisper Telugu model: {self.model_name}")
-            self.processor = AutoProcessor.from_pretrained(self.model_name)
-            self.model = AutoModelForSpeechSeq2Seq.from_pretrained(self.model_name).to(self.device)
-            
-            # Set the forced decoder IDs for Telugu
-            forced_decoder_ids = self.processor.get_decoder_prompt_ids(
-                language="te",
-                task="transcribe"
+            # Initialize the pipeline as recommended in the docs
+            transcribe_pipeline = pipeline(
+                task="automatic-speech-recognition",
+                model=model_name,
+                chunk_length_s=30,
+                device=device
             )
-            self.model.config.forced_decoder_ids = forced_decoder_ids
-            self.model.config.suppress_tokens = []
             
-            logger.info("Successfully initialized Whisper Telugu components")
+            # Set the forced decoder IDs as shown in the documentation
+            transcribe_pipeline.model.config.forced_decoder_ids = (
+                transcribe_pipeline.tokenizer.get_decoder_prompt_ids(
+                    language="te",
+                    task="transcribe"
+                )
+            )
             
+            logger.info("Successfully initialized Whisper Telugu pipeline")
         except Exception as e:
-            logger.error(f"Failed to initialize Whisper Telugu components: {str(e)}")
-            raise RuntimeError(f"Model initialization failed: {str(e)}")
+            logger.error(f"Failed to initialize Whisper Telugu components: {e}")
+            raise
 
-    def validate_audio(self, audio_array: np.ndarray, sampling_rate: int) -> Tuple[bool, str]:
-        """Validate audio array before processing"""
+def load_audio_for_telugu(audio_path):
+    """Enhanced audio loading function with preprocessing for Telugu transcription"""
+    try:
+        logger.info(f"Loading audio from: {audio_path}")
+        
+        audio_array, sampling_rate = librosa.load(
+            audio_path,
+            sr=16000,
+            mono=True
+        )
+        
+        logger.info(f"Audio array shape: {audio_array.shape}")
+        logger.info(f"Sample rate: {sampling_rate}")
+        
         if len(audio_array) == 0:
-            return False, "Audio file is empty"
+            logger.error("Audio file is empty")
+            return None
             
         if not np.isfinite(audio_array).all():
-            return False, "Audio contains invalid values (inf or nan)"
-            
+            logger.warning("Audio contains invalid values (inf or nan)")
+            audio_array = np.nan_to_num(audio_array)
+        
+        audio_array = librosa.util.normalize(audio_array)
+        if not np.isfinite(audio_array).all():
+            logger.error("Normalized audio contains invalid values")
+            return None
+        
         if len(audio_array.shape) != 1:
-            return False, f"Unexpected audio shape: {audio_array.shape}"
+            logger.error(f"Unexpected audio shape: {audio_array.shape}")
+            return None
             
-        min_length = sampling_rate  # 1 second minimum
+        min_length = 16000
         if len(audio_array) < min_length:
-            return False, f"Audio too short: {len(audio_array)} samples"
+            logger.error(f"Audio too short: {len(audio_array)} samples")
+            return None
             
-        return True, ""
+        audio_array = audio_array.reshape(1, -1)
+        logger.info(f"Final array shape: {audio_array.shape}")
+        
+        return audio_array
+    except Exception as e:
+        logger.error(f"Error loading audio for Telugu transcription: {e}")
+        return None
 
-    def load_audio(self, audio_path: Union[str, Path]) -> Optional[np.ndarray]:
-        """Load and preprocess audio file with validation"""
-        try:
-            logger.info(f"Loading audio from: {audio_path}")
-            
-            audio_array, sampling_rate = librosa.load(
-                audio_path,
-                sr=16000,
-                mono=True
-            )
-            
-            logger.info(f"Audio array shape: {audio_array.shape}")
-            logger.info(f"Sample rate: {sampling_rate}")
-            
-            # Validate the loaded audio
-            is_valid, error_message = self.validate_audio(audio_array, sampling_rate)
-            if not is_valid:
-                logger.error(error_message)
-                return None
-            
-            # Normalize audio
-            audio_array = librosa.util.normalize(audio_array)
-            if not np.isfinite(audio_array).all():
-                logger.error("Normalized audio contains invalid values")
-                return None
-            
-            # Reshape for model input
-            audio_array = audio_array.reshape(1, -1)
-            logger.info(f"Final array shape: {audio_array.shape}")
-            
-            return audio_array
-            
-        except Exception as e:
-            logger.error(f"Error loading audio: {str(e)}")
+def transcribe_telugu(audio_path):
+    """Transcribe Telugu audio using Whisper Telugu Large v2"""
+    try:
+        if transcribe_pipeline is None:
+            logger.error("Transcription pipeline not initialized")
             return None
+            
+        logger.info("Starting transcription with pipeline")
+        result = transcribe_pipeline(str(audio_path))
+        
+        transcribed_text = result["text"].strip()
+        
+        if not transcribed_text:
+            logger.error("Empty transcription result")
+            return None
+        
+        logger.info(f"Successfully transcribed text length: {len(transcribed_text)}")
+        logger.info("First 100 characters of transcription: " + transcribed_text[:100] + "...")
+        return transcribed_text
+        
+    except Exception as e:
+        logger.error(f"Error during Telugu transcription: {e}")
+        logger.error(f"Exception type: {type(e)}")
+        logger.error(f"Exception args: {e.args}")
+        return None
 
-    def transcribe(self, audio_path: Union[str, Path]) -> Optional[str]:
-        """Transcribe Telugu audio with comprehensive error handling"""
-        try:
-            # Load and preprocess audio
-            audio_array = self.load_audio(str(audio_path))
-            if audio_array is None:
-                return None
-            
-            # Process audio with processor
-            inputs = self.processor(
-                audio_array,
-                sampling_rate=16000,
-                return_tensors="pt"
-            ).to(self.device)
-            
-            # Generate transcription
-            logger.info("Generating transcription")
-            with torch.no_grad():
-                generated_ids = self.model.generate(
-                    input_features=inputs.input_features,
-                    max_new_tokens=448,
-                    num_beams=4,
-                    length_penalty=1.0,
-                    no_repeat_ngram_size=3,
-                    temperature=0.7
-                )
-            
-            # Decode the generated ids
-            transcribed_text = self.processor.batch_decode(
-                generated_ids,
-                skip_special_tokens=True
-            )
-            
-            # Validate transcription result
-            if not transcribed_text or not transcribed_text[0].strip():
-                logger.error("Empty transcription result")
-                return None
-            
-            result = transcribed_text[0].strip()
-            logger.info(f"Successfully transcribed text length: {len(result)}")
-            logger.info("First 100 characters: " + result[:100] + "...")
-            
-            return result
-            
-        except IndexError as e:
-            logger.error(f"Index error during transcription: {str(e)}")
-            logger.error(f"Generated IDs shape: {generated_ids.shape if 'generated_ids' in locals() else 'Not available'}")
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error during Telugu transcription: {str(e)}")
-            logger.error(f"Exception type: {type(e)}")
-            logger.error(f"Exception args: {e.args}")
-            return None
+# Initialize Whisper components on module load
+initialize_whisper()
