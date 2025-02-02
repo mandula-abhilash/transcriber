@@ -10,6 +10,14 @@ from ..config import settings
 import numpy as np
 import librosa
 import torch
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Initialize OpenAI client with empty key - will be updated from request
 client = openai.OpenAI(api_key="")
@@ -46,10 +54,16 @@ def get_proxy_config():
 
 # Initialize the model and processor if using Whisper Telugu Large v2
 if settings.USE_WHISPER_TELUGU_LARGE_V2:
+    logger.info("Initializing Whisper Telugu Large v2 model and processor")
     model_name = "vasista22/whisper-telugu-large-v2"
-    model = WhisperForConditionalGeneration.from_pretrained(model_name)
-    processor = WhisperProcessor.from_pretrained(model_name)
-    model.config.no_timestamps_token_id = processor.tokenizer.convert_tokens_to_ids("<|notimestamps|>")
+    try:
+        model = WhisperForConditionalGeneration.from_pretrained(model_name)
+        processor = WhisperProcessor.from_pretrained(model_name)
+        model.config.no_timestamps_token_id = processor.tokenizer.convert_tokens_to_ids("<|notimestamps|>")
+        logger.info("Successfully initialized Whisper Telugu Large v2 model and processor")
+    except Exception as e:
+        logger.error(f"Failed to initialize Whisper Telugu Large v2 model: {e}")
+        raise
 
 def get_iso_language_code(language):
     if not language:
@@ -89,12 +103,6 @@ def get_video_info(url):
             'geo_bypass': True,
         }
         
-        # Add proxy configuration if available
-        # proxy_config = get_proxy_config()
-        # if proxy_config:
-        #     ydl_opts['proxy'] = proxy_config['http']
-        
-        # Add cookies file if available
         if settings.YOUTUBE_COOKIES_PATH:
             ydl_opts['cookiefile'] = settings.YOUTUBE_COOKIES_PATH
     
@@ -103,7 +111,7 @@ def get_video_info(url):
             raw_title = info.get('title', 'untitled')
             return sanitize_filename(raw_title)
     except Exception as e:
-        print(f"Failed to get video title: {e}")
+        logger.error(f"Failed to get video title: {e}")
         return None
 
 def download_audio_from_youtube(url):
@@ -129,17 +137,8 @@ def download_audio_from_youtube(url):
         'geo_bypass': True,
         'extract_flat': False,
         'force_generic_extractor': False,
-        # 'http_headers': {        
-        #     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        # }
     }
     
-    # Add proxy configuration if available
-    # proxy_config = get_proxy_config()
-    # if proxy_config:
-    #     ydl_opts['proxy'] = proxy_config['http']
-
-    # Add cookies file if available
     if settings.YOUTUBE_COOKIES_PATH:
         ydl_opts['cookiefile'] = settings.YOUTUBE_COOKIES_PATH
     
@@ -147,18 +146,18 @@ def download_audio_from_youtube(url):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
         if output_file.exists():
-            print(f"Audio downloaded successfully: {output_file}")
+            logger.info(f"Audio downloaded successfully: {output_file}")
             return output_file
         else:
-            print("Download completed but file not found")
+            logger.error("Download completed but file not found")
             return None
     except Exception as e:
-        print(f"Error downloading audio: {e}")
+        logger.error(f"Error downloading audio: {e}")
         return None
 
 def reencode_audio(input_file):
     if not input_file or not input_file.exists():
-        print("Input file does not exist")
+        logger.error("Input file does not exist")
         return None
         
     output_file = input_file.parent / f"processed_{input_file.name}"
@@ -175,19 +174,19 @@ def reencode_audio(input_file):
         ]
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:
-            print(f"FFmpeg error: {result.stderr}")
+            logger.error(f"FFmpeg error: {result.stderr}")
             return None
         return output_file
     except subprocess.CalledProcessError as e:
-        print(f"Error re-encoding audio: {e.stderr}")
+        logger.error(f"Error re-encoding audio: {e.stderr}")
         return None
     except Exception as e:
-        print(f"Unexpected error during re-encoding: {e}")
+        logger.error(f"Unexpected error during re-encoding: {e}")
         return None
 
 def load_audio_for_telugu(audio_path):
     try:
-        print(f"Loading audio from: {audio_path}")
+        logger.info(f"Loading audio from: {audio_path}")
         
         audio_array, sampling_rate = librosa.load(
             audio_path,
@@ -195,42 +194,42 @@ def load_audio_for_telugu(audio_path):
             mono=True
         )
         
-        print(f"Audio array shape: {audio_array.shape}")
-        print(f"Sample rate: {sampling_rate}")
+        logger.info(f"Audio array shape: {audio_array.shape}")
+        logger.info(f"Sample rate: {sampling_rate}")
         
         if len(audio_array) == 0:
-            print("Audio file is empty")
+            logger.error("Audio file is empty")
             return None
             
         if not np.isfinite(audio_array).all():
-            print("Audio contains invalid values (inf or nan)")
+            logger.warning("Audio contains invalid values (inf or nan)")
             audio_array = np.nan_to_num(audio_array)
         
         audio_array = librosa.util.normalize(audio_array)
         if not np.isfinite(audio_array).all():
-            print("Normalized audio contains invalid values")
+            logger.error("Normalized audio contains invalid values")
             return None
         
         if len(audio_array.shape) != 1:
-            print(f"Unexpected audio shape: {audio_array.shape}")
+            logger.error(f"Unexpected audio shape: {audio_array.shape}")
             return None
             
         min_length = 16000
         if len(audio_array) < min_length:
-            print(f"Audio too short: {len(audio_array)} samples")
+            logger.error(f"Audio too short: {len(audio_array)} samples")
             return None
             
         audio_array = audio_array.reshape(1, -1)
-        print(f"Final array shape: {audio_array.shape}")
+        logger.info(f"Final array shape: {audio_array.shape}")
         
         return audio_array
     except Exception as e:
-        print(f"Error loading audio for Telugu transcription: {e}")
+        logger.error(f"Error loading audio for Telugu transcription: {e}")
         return None
 
 def transcribe_audio(audio_path, source_language=None):
     if not audio_path or not Path(audio_path).exists():
-        print("Audio file does not exist")
+        logger.error("Audio file does not exist")
         return None, None
         
     try:
@@ -238,14 +237,17 @@ def transcribe_audio(audio_path, source_language=None):
 
         # Use Hugging Face model for Telugu transcription if flag is enabled
         if source_language == "telugu" and settings.USE_WHISPER_TELUGU_LARGE_V2:
+            logger.info("Starting Telugu transcription with Whisper Telugu Large v2")
             try:
+                logger.info("Loading and preprocessing audio")
                 audio_array = load_audio_for_telugu(audio_path)
                 if audio_array is None:
-                    print("Failed to load audio for Telugu transcription")
+                    logger.error("Failed to load audio for Telugu transcription")
                     return None, None
                 
-                print(f"Input features shape before processing: {audio_array.shape}")
+                logger.info(f"Input features shape before processing: {audio_array.shape}")
                 
+                logger.info("Processing audio with Whisper processor")
                 inputs = processor(
                     audio_array,
                     sampling_rate=16000,
@@ -253,14 +255,16 @@ def transcribe_audio(audio_path, source_language=None):
                 )
                 
                 if "input_features" not in inputs:
-                    print("Processor failed to generate input features")
+                    logger.error("Processor failed to generate input features")
                     return None, None
                     
-                print(f"Processed input features shape: {inputs['input_features'].shape}")
+                logger.info(f"Processed input features shape: {inputs['input_features'].shape}")
                 
+                logger.info("Getting decoder prompt IDs for Telugu")
                 forced_decoder_ids = processor.get_decoder_prompt_ids(language="te", task="transcribe")
                 
                 try:
+                    logger.info("Generating transcription with model")
                     with torch.no_grad():
                         predicted_ids = model.generate(
                             inputs["input_features"],
@@ -275,18 +279,19 @@ def transcribe_audio(audio_path, source_language=None):
                         
                     if hasattr(predicted_ids, 'sequences'):
                         sequences = predicted_ids.sequences
-                        print(f"Generated sequences shape: {sequences.shape}")
+                        logger.info(f"Generated sequences shape: {sequences.shape}")
                     else:
-                        print("No sequences in generated output")
+                        logger.error("No sequences in generated output")
                         return None, None
 
                 except RuntimeError as e:
-                    print(f"Error during model generation: {e}")
-                    print(f"Model device: {next(model.parameters()).device}")
-                    print(f"Input device: {inputs['input_features'].device}")
+                    logger.error(f"Error during model generation: {e}")
+                    logger.error(f"Model device: {next(model.parameters()).device}")
+                    logger.error(f"Input device: {inputs['input_features'].device}")
                     return None, None
                 
                 try:
+                    logger.info("Decoding transcribed text")
                     transcribed_text = processor.batch_decode(
                         sequences,
                         skip_special_tokens=True,
@@ -294,20 +299,21 @@ def transcribe_audio(audio_path, source_language=None):
                     )[0].strip()
                     
                     if not transcribed_text:
-                        print("Empty transcription result")
+                        logger.error("Empty transcription result")
                         return None, None
                     
-                    print(f"Successfully transcribed text length: {len(transcribed_text)}")
+                    logger.info(f"Successfully transcribed text length: {len(transcribed_text)}")
+                    logger.info("First 100 characters of transcription: " + transcribed_text[:100] + "...")
                     return transcribed_text, "te"
                     
                 except Exception as e:
-                    print(f"Error during text decoding: {e}")
+                    logger.error(f"Error during text decoding: {e}")
                     return None, None
                
             except Exception as e:
-                print(f"Error during Telugu transcription: {e}")
-                print(f"Exception type: {type(e)}")
-                print(f"Exception args: {e.args}")
+                logger.error(f"Error during Telugu transcription: {e}")
+                logger.error(f"Exception type: {type(e)}")
+                logger.error(f"Exception args: {e.args}")
                 return None, None
 
         # Use OpenAI Whisper for other languages or Telugu when flag is disabled
@@ -333,7 +339,7 @@ def transcribe_audio(audio_path, source_language=None):
             return transcribed_text, detected_language
 
     except Exception as e:
-        print(f"Error during transcription: {e}")
+        logger.error(f"Error during transcription: {e}")
         return None, None
 
 def translate_telugu_to_english(text):
@@ -354,7 +360,7 @@ def translate_telugu_to_english(text):
         )
         return response.choices[0].message.content
     except Exception as e:
-        print(f"Error during Telugu translation: {e}")
+        logger.error(f"Error during Telugu translation: {e}")
         return None
 
 def translate_to_english(text, source_language):
@@ -378,5 +384,5 @@ def translate_to_english(text, source_language):
         )
         return response.choices[0].message.content
     except Exception as e:
-        print(f"Error during translation: {e}")
+        logger.error(f"Error during translation: {e}")
         return None
